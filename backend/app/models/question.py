@@ -48,7 +48,7 @@ class Question(Base):
 
     # --- 答案与解析 ---
     answer: Mapped[str | None] = mapped_column(
-        String(50), nullable=True, default="", comment="正确答案: A/B/C/D 或文本 (题本无答案时为空)"
+        Text, nullable=True, default="", comment="正确答案: A/B/C/D 或文本 (题本无答案时为空)"
     )
     answer_ref: Mapped[str | None] = mapped_column(
         String(100), nullable=True, comment="答案引用页码: 如'答案见原书P6'"

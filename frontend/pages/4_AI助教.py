@@ -13,7 +13,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).parent.parent))
 from shared.styles import apply_theme, gradient_header, glow_divider, status_badge
 from shared.api import get_api_base
 
-st.set_page_config(page_title="AI助教", page_icon="🤖", layout="wide")
+st.set_page_config(page_title="学习助教", page_icon="🤖", layout="wide")
 apply_theme()
 
 api_base = get_api_base()
@@ -21,7 +21,7 @@ api_base = get_api_base()
 # 保留最近20条对话（10轮），防止超出LLM上下文窗口
 MAX_HISTORY = 20
 
-gradient_header("🤖 408考研AI助教", level=2)
+gradient_header("🤖 学习助教", level=2)
 st.markdown(
     '<p class="tagline">基于DeepSeek大模型 · 专注408科目复习的智能助教</p>',
     unsafe_allow_html=True,

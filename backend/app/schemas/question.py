@@ -23,6 +23,21 @@ class QuestionCreate(BaseModel):
     source_pdf: str | None = Field(None, max_length=500, description="来源PDF")
 
 
+class ManualAnswerUpdate(BaseModel):
+    """User-confirmed answer or reference solution for any question."""
+
+    answer: str = Field(..., min_length=1, max_length=10000, description="选择题为 A/B/C/D；综合题为参考答案")
+    analysis: str | None = Field(None, max_length=10000, description="可选解析")
+    confirm_overwrite: bool = Field(False, description="确认覆盖已有标准答案")
+
+
+class ManualAnswerResponse(BaseModel):
+    question_id: int
+    answer: str
+    analysis: str | None = None
+    answer_source: str = "user_confirmed"
+
+
 class QuestionResponse(BaseModel):
     """Schema for question API response."""
 

@@ -46,7 +46,7 @@ frontend = subprocess.Popen(
 )
 
 print("=" * 50)
-print("  408考研AI助教 已启动")
+print("  学习助教 已启动")
 print("  Backend:  http://127.0.0.1:8000")
 print("  Frontend: http://127.0.0.1:8501")
 print("  API文档:  http://127.0.0.1:8000/docs")

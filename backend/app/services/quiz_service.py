@@ -29,6 +29,10 @@ from app.services.misconception_service import MisconceptionService
 logger = get_logger("quiz_service")
 
 
+class AnswerAlreadyExistsError(ValueError):
+    """Do not silently replace a previously stored standard answer."""
+
+
 class QuizService:
     """Service for quiz operations (刷题, 答题, 统计)."""
 
@@ -111,7 +115,12 @@ class QuizService:
 
         # Only choice questions are auto-gradable
         if is_choice and correct_answer:
-            answer_source = "built_in"
+            latest = self.answer_candidate_repo.get_latest(question.id)
+            answer_source = (
+                "user_confirmed" if latest is not None
+                and latest.source == "user_confirmed"
+                and latest.answer_text == correct_answer else "built_in"
+            )
             answer_confidence = 1.0
             usable_for_grading = True
         elif is_choice:
@@ -121,9 +130,14 @@ class QuizService:
             answer_source = resolved["source"]
             answer_confidence = resolved["confidence"]
             usable_for_grading = resolved["usable_for_grading"]
-        elif not is_choice and not analysis:
+        elif not is_choice and not analysis and not correct_answer:
             # 综合题无客观答案，不判分；但若库中尚无解析，调 AI 生成参考答案供用户对照
             analysis = self._fetch_essay_reference(question)
+
+        if not is_choice and correct_answer:
+            latest = self.answer_candidate_repo.get_latest(question.id)
+            if latest and latest.source == "user_confirmed" and latest.answer_text == correct_answer:
+                answer_source = "user_confirmed"
 
         # Determine grading outcome
         graded = False
@@ -203,6 +217,42 @@ class QuizService:
             misconception_synced=misconception_synced,
             wrong_question_synced=wrong_question_synced,
         )
+
+    def save_manual_answer(
+        self, question_id: int, answer: str, analysis: str | None = None,
+        confirm_overwrite: bool = False,
+    ) -> Question:
+        """Calibrate an answer; never recalculate historical quiz records."""
+        question = self.question_repo.get_by_id(question_id)
+        if question is None:
+            raise QuestionNotFoundError(f"Question not found: id={question_id}")
+
+        normalized = answer.strip()
+        if not normalized:
+            raise ValueError("答案不能为空")
+        if question.question_type == "choice":
+            normalized = normalized.upper()
+            if normalized not in {"A", "B", "C", "D"} or not (
+                getattr(question, f"option_{normalized.lower()}") or ""
+            ).strip():
+                raise ValueError("请选择本题实际存在的 A/B/C/D 选项")
+        if (question.answer or "").strip() and not confirm_overwrite:
+            raise AnswerAlreadyExistsError("该题已有答案，请确认覆盖后再保存")
+
+        explanation = (analysis or "").strip() or None
+        question.answer = normalized
+        if explanation:
+            question.analysis = explanation
+        self.answer_candidate_repo.create_candidate(
+            question_id=question.id,
+            source="user_confirmed",
+            answer_text=normalized,
+            explanation=explanation,
+            confidence=1.0 if question.question_type == "choice" else None,
+            is_verified=True,
+        )
+        self.db.commit()
+        return question
 
     # ── Helpers ──
 

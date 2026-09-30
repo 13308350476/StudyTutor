@@ -1,15 +1,13 @@
 """WrongQuestion Service — business logic for wrong question management."""
 
-from datetime import datetime
-
 from sqlalchemy.orm import Session
 
 from app.core.exceptions import QuestionNotFoundError
 from app.core.logging_config import get_logger
 from app.models.question import Question
 from app.repositories.question_repo import QuestionRepository
-from app.repositories.quiz_repo import QuizRepository, WeakKnowledgeRepository
 from app.repositories.wrong_question_repo import WrongQuestionRepository
+from app.services.quiz_service import QuizService
 
 logger = get_logger("wrong_question_service")
 
@@ -21,8 +19,6 @@ class WrongQuestionService:
         self.db = db
         self.repo = WrongQuestionRepository(db)
         self.question_repo = QuestionRepository(db)
-        self.quiz_repo = QuizRepository(db)
-        self.weak_repo = WeakKnowledgeRepository(db)
 
     # ── Add ──
 
@@ -31,7 +27,7 @@ class WrongQuestionService:
     ) -> dict:
         """Add a question to the wrong question collection.
 
-        If already exists, updates status. Returns serialized dict.
+        A duplicate manual add preserves the existing review status.
         """
         question = self.question_repo.get_by_id(question_id)
         if not question:
@@ -131,66 +127,26 @@ class WrongQuestionService:
         return results
 
     def submit_review(self, wrong_id: int, user_answer: str) -> dict:
-        """Submit a re-challenge answer and update status.
-
-        Also creates a quiz_record and updates weak_knowledge stats.
-        """
+        """Use the same grading as practice; update review status only when graded."""
         wq = self.repo.get_with_question(wrong_id)
         if not wq or not wq.question:
             return {"error": "Wrong question not found"}
 
-        question = wq.question
-        correct_answer = (question.answer or "").strip()
-
-        # Grade
-        is_correct = False
-        if correct_answer:
-            is_correct = user_answer.strip().upper() == correct_answer.upper()
-
-        # Update wrong question status
-        self.repo.update_review(wrong_id, is_correct)
-
-        # Record in quiz_records for history/stats
-        self.quiz_repo.create_record(question.id, user_answer, is_correct)
-
-        # Update weak_knowledge
-        if question.knowledge_tag:
-            for tag in question.knowledge_tag.split(","):
-                tag = tag.strip()
-                if tag:
-                    self.weak_repo.update_stats(tag, is_correct)
-
-        misconception_synced = True
-        if correct_answer and not is_correct:
-            try:
-                from app.services.misconception_service import MisconceptionService
-
-                MisconceptionService(self.db).analyze_wrong_answer(
-                    question, user_answer, correct_answer
-                )
-            except Exception as exc:
-                misconception_synced = False
-                logger.warning(
-                    f"Misconception review analysis failed for wrong question #{wrong_id}: {exc}",
-                    exc_info=True,
-                )
-
-        self.db.commit()
+        result = QuizService(self.db).submit_answer(wq.question_id, user_answer)
+        if result.graded:
+            self.repo.update_review(wrong_id, result.is_correct)
+            self.db.commit()
 
         logger.info(
-            f"Re-challenge: wq#{wrong_id} Q#{question.id}, "
-            f"user={user_answer}, correct={correct_answer}, match={is_correct}"
+            f"Re-challenge: wq#{wrong_id} Q#{wq.question_id}, "
+            f"graded={result.graded}, match={result.is_correct if result.graded else 'n/a'}"
         )
 
         return {
-            "is_correct": is_correct,
-            "correct_answer": correct_answer or "(暂无答案)",
-            "user_answer": user_answer,
-            "analysis": question.analysis or "",
+            **result.model_dump(),
             "updated": {
-                "last_status": "correct" if is_correct else "wrong",
+                "last_status": wq.last_status,
                 "review_count": wq.review_count,
-                "misconception_synced": misconception_synced,
             },
         }
 

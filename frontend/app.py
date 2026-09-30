@@ -1,4 +1,4 @@
-"""408考研AI专属助教 — Streamlit Frontend Entry Point.
+"""学习助教 — Streamlit Frontend Entry Point.
 
 Run with:
     streamlit run frontend/app.py
@@ -16,7 +16,7 @@ from shared.styles import apply_theme, gradient_header, neon_card, glow_divider
 _DEFAULT_API_BASE = os.environ.get("API_BASE_URL", "http://localhost:8000")
 
 st.set_page_config(
-    page_title="408考研AI助教",
+    page_title="学习助教",
     page_icon="📚",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -25,9 +25,9 @@ st.set_page_config(
 apply_theme()
 
 # ── Hero Section ──
-gradient_header("📚 408考研AI专属助教")
+gradient_header("📚 学习助教")
 st.markdown(
-    '<p class="tagline">你的专属AI考研助教 · 智能刷题 · 精准分析</p>',
+    '<p class="tagline">专注408复习 · 智能刷题 · 精准分析</p>',
     unsafe_allow_html=True,
 )
 

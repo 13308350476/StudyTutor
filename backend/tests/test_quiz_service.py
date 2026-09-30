@@ -173,8 +173,9 @@ class TestUngradedSubmission:
             def is_configured(self):
                 return True
 
-            def answer_question(self, *a, **kw):
-                return {"answer": "无法确定", "analysis": ""}  # invalid letter
+            def answer_question_with_confidence(self, *a, **kw):
+                return {"answer": "无法确定", "analysis": "", "confidence": 0.0,
+                        "usable_for_grading": False}  # invalid letter
 
         monkeypatch.setattr(qs_module, "get_llm_service", lambda: _DummyLLM())
 
@@ -200,8 +201,9 @@ class TestUngradedSubmission:
             def is_configured(self):
                 return True
 
-            def answer_question(self, *a, **kw):
-                return {"answer": "B", "analysis": "解析B"}
+            def answer_question_with_confidence(self, *a, **kw):
+                return {"answer": "B", "analysis": "解析B", "confidence": 0.95,
+                        "usable_for_grading": True}
 
         monkeypatch.setattr(qs_module, "get_llm_service", lambda: _DummyLLM())
 
@@ -211,9 +213,13 @@ class TestUngradedSubmission:
         assert result.graded is True
         assert result.is_correct is True
         assert result.correct_answer == "B"
-        # Answer written back to DB
+        # AI answers are stored as verified candidates, not canonical answers.
         db_session.refresh(q)
-        assert q.answer == "B"
+        assert q.answer == ""
+        from app.models.answer_candidate import AnswerCandidate
+        candidate = db_session.query(AnswerCandidate).filter_by(question_id=q.id).one()
+        assert candidate.answer_text == "B"
+        assert candidate.is_verified is True
         # Recorded in stats
         stats = service.get_stats()
         assert stats.total_attempts == 1

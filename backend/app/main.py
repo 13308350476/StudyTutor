@@ -1,4 +1,4 @@
-"""408考研AI专属助教 — FastAPI Application Entry Point.
+"""学习助教 — FastAPI Application Entry Point.
 
 Run with:
     uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
@@ -87,7 +87,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title=settings.app_name,
     version=settings.app_version,
-    description="408考研AI专属助教 — PDF题库导入、刷题、错题分析",
+    description="学习助教 — 408题库导入、刷题、错题分析",
     lifespan=lifespan,
 )
 

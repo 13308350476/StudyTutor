@@ -17,7 +17,7 @@ jobs:
       - name: Generate Release Notes
         id: notes
         run: |
-          echo "## 408考研AI专属助教 ${{ github.ref_name }}" > release_notes.md
+          echo "## 学习助教 ${{ github.ref_name }}" > release_notes.md
           echo "" >> release_notes.md
           echo "### 变更内容" >> release_notes.md
           echo "" >> release_notes.md

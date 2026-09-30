@@ -26,7 +26,8 @@ class WrongQuestionRepository(BaseRepository[WrongQuestion]):
     ) -> WrongQuestion:
         """Upsert: insert new or update existing wrong question.
 
-        If question_id already exists, updates last_status to 'wrong'.
+        An automatic wrong answer marks an existing entry as 'wrong'; manually
+        re-adding a question leaves its review status untouched.
         Returns the WrongQuestion row.
         """
         existing = (
@@ -35,7 +36,8 @@ class WrongQuestionRepository(BaseRepository[WrongQuestion]):
             .first()
         )
         if existing:
-            existing.last_status = "wrong"
+            if source == "auto":
+                existing.last_status = "wrong"
             existing.subject = subject
             existing.chapter = chapter
             self.db.flush()

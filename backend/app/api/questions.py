@@ -10,7 +10,11 @@ from sqlalchemy.orm import Session
 from app.api.deps import get_db
 from app.repositories.asset_repo import QuestionAssetRepository
 from app.repositories.question_repo import QuestionRepository
-from app.schemas.question import QuestionListResponse, QuestionResponse
+from app.schemas.question import (
+    ManualAnswerResponse, ManualAnswerUpdate, QuestionListResponse, QuestionResponse,
+)
+from app.core.exceptions import QuestionNotFoundError
+from app.services.quiz_service import AnswerAlreadyExistsError, QuizService
 
 router = APIRouter(prefix="/api/questions", tags=["questions"])
 
@@ -177,3 +181,27 @@ def get_question(question_id: int, db: Session = Depends(get_db)):
     if question is None:
         raise HTTPException(status_code=404, detail="Question not found")
     return QuestionResponse.model_validate(question)
+
+
+@router.put("/{question_id}/answer", response_model=ManualAnswerResponse)
+def save_manual_answer(
+    question_id: int,
+    payload: ManualAnswerUpdate,
+    db: Session = Depends(get_db),
+):
+    """Calibrate a question's answer, optionally confirming an overwrite."""
+    try:
+        question = QuizService(db).save_manual_answer(
+            question_id, payload.answer, payload.analysis, payload.confirm_overwrite
+        )
+    except QuestionNotFoundError:
+        raise HTTPException(status_code=404, detail="Question not found")
+    except AnswerAlreadyExistsError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return ManualAnswerResponse(
+        question_id=question.id,
+        answer=question.answer,
+        analysis=question.analysis,
+    )

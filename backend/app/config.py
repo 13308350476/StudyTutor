@@ -27,7 +27,7 @@ class Settings(BaseSettings):
     """
 
     # --- Application ---
-    app_name: str = "408考研AI专属助教"
+    app_name: str = "学习助教"
     app_version: str = "0.2.3"
     debug: bool = False
 

@@ -32,6 +32,7 @@ for key, default in [
     ("wq_review_result", None),
     ("wq_review_correct_count", 0),
     ("wq_review_wrong_count", 0),
+    ("wq_review_ungraded_count", 0),
     ("wq_selected", set()),
 ]:
     if key not in st.session_state:
@@ -149,13 +150,26 @@ def _submit_review(wrong_id, user_answer):
         r = requests.post(
             f"{api_base}/api/wrong-questions/{wrong_id}/review",
             json={"user_answer": user_answer},
-            timeout=30,
+            timeout=60,
         )
         if r.status_code == 200:
             return r.json()
     except requests.ConnectionError:
         pass
     return None
+
+
+def _save_review_result(result):
+    """Record one successful submission without treating ungraded as wrong."""
+    st.session_state.wq_review_result = result
+    st.session_state.wq_review_answered = True
+    if not result.get("graded", False):
+        st.session_state.wq_review_ungraded_count += 1
+    elif result.get("is_correct"):
+        st.session_state.wq_review_correct_count += 1
+    else:
+        st.session_state.wq_review_wrong_count += 1
+    st.rerun()
 
 
 def _render_question_assets(q):
@@ -207,6 +221,7 @@ def _exit_review():
     st.session_state.wq_review_result = None
     st.session_state.wq_review_correct_count = 0
     st.session_state.wq_review_wrong_count = 0
+    st.session_state.wq_review_ungraded_count = 0
     # Clean widget keys
     for k in list(st.session_state.keys()):
         if isinstance(k, str) and k.startswith("rc_"):
@@ -316,11 +331,13 @@ if st.session_state.wq_review_mode:
     if idx >= total_q:
         cc = st.session_state.wq_review_correct_count
         wc = st.session_state.wq_review_wrong_count
+        uc = st.session_state.wq_review_ungraded_count
+        graded = cc + wc
         st.markdown(
             f'<div class="score-card">'
-            f'<div class="score-value">{cc}/{total_q}</div>'
+            f'<div class="score-value">{cc}/{graded}</div>'
             f'<p style="color:#e0e0f0;margin-top:8px;">'
-            f'正确 {cc} 题，错误 {wc} 题</p></div>',
+            f'正确 {cc} 题，错误 {wc} 题，未判分 {uc} 题</p></div>',
             unsafe_allow_html=True,
         )
         if st.button("退出重做", type="primary"):
@@ -377,13 +394,10 @@ if st.session_state.wq_review_mode:
             if st.button("📝 提交答案", type="primary"):
                 if selected_letter:
                     result = _submit_review(wid, selected_letter)
-                    st.session_state.wq_review_result = result
-                    st.session_state.wq_review_answered = True
-                    if result and result.get("is_correct"):
-                        st.session_state.wq_review_correct_count += 1
+                    if result is not None:
+                        _save_review_result(result)
                     else:
-                        st.session_state.wq_review_wrong_count += 1
-                    st.rerun()
+                        st.error("提交失败，请检查后端连接后重试")
                 else:
                     st.warning("请选择一个答案")
         else:
@@ -392,25 +406,35 @@ if st.session_state.wq_review_mode:
             if st.button("📝 提交答案", type="primary"):
                 if text_ans:
                     result = _submit_review(wid, text_ans)
-                    st.session_state.wq_review_result = result
-                    st.session_state.wq_review_answered = True
-                    if result and result.get("is_correct"):
-                        st.session_state.wq_review_correct_count += 1
+                    if result is not None:
+                        _save_review_result(result)
                     else:
-                        st.session_state.wq_review_wrong_count += 1
-                    st.rerun()
+                        st.error("提交失败，请检查后端连接后重试")
+                else:
+                    st.warning("请输入答案")
     else:
         # Show result
         result = st.session_state.wq_review_result
         if result:
-            if result.get("is_correct"):
+            correct_answer = result.get("correct_answer", "")
+            if not result.get("graded", False):
+                st.info("⚪ 本题未自动判分，不计入正确率，错题状态保持不变。请自行对照参考答案。")
+                if correct_answer and correct_answer != "(暂无答案)":
+                    with st.expander("📖 查看参考答案"):
+                        st.markdown(correct_answer)
+                elif result.get("answer_ref"):
+                    st.caption(f"答案参考: {result['answer_ref']}")
+                if result.get("analysis"):
+                    with st.expander("📖 查看解析"):
+                        st.markdown(result["analysis"])
+            elif result.get("is_correct"):
                 st.success(f"✅ 回答正确！正确答案: {result.get('correct_answer', '')}")
             else:
                 st.error(
                     f"❌ 回答错误！你的答案: {result.get('user_answer', '')}，"
                     f"正确答案: {result.get('correct_answer', '')}"
                 )
-            if result.get("analysis"):
+            if result.get("graded") and result.get("analysis"):
                 with st.expander("📖 查看解析"):
                     st.markdown(result["analysis"])
 
@@ -451,6 +475,7 @@ if sel:
                 st.session_state.wq_review_result = None
                 st.session_state.wq_review_correct_count = 0
                 st.session_state.wq_review_wrong_count = 0
+                st.session_state.wq_review_ungraded_count = 0
                 st.rerun()
             else:
                 st.warning("无法加载题目数据")
@@ -546,6 +571,7 @@ for item in items:
                 st.session_state.wq_review_result = None
                 st.session_state.wq_review_correct_count = 0
                 st.session_state.wq_review_wrong_count = 0
+                st.session_state.wq_review_ungraded_count = 0
                 st.rerun()
     with btn_col2:
         if st.button("🗑️ 移除", key=f"wq_rm_{wid}"):

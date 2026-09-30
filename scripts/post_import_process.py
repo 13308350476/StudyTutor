@@ -398,7 +398,7 @@ def main():
     args = parser.parse_args()
 
     print("=" * 60)
-    print("  408-AI-Tutor 导入后处理")
+    print("  学习助教 导入后处理")
     print("=" * 60)
     if args.dry_run:
         print("  [预览模式] 不会修改任何数据\n")

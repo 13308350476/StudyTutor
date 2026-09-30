@@ -50,6 +50,8 @@ for key, default in [
     ("quiz_answers", {}),
     ("quiz_submitted", False),
     ("quiz_results", {}),
+    ("quiz_manual_answers", {}),
+    ("quiz_added_wrong_ids", set()),
     ("quiz_chapter_idx", 0),
     ("quiz_mode", ""),
 ]:
@@ -63,6 +65,8 @@ def _clean_quiz_state():
     st.session_state.quiz_answers = {}
     st.session_state.quiz_submitted = False
     st.session_state.quiz_results = {}
+    st.session_state.quiz_manual_answers = {}
+    st.session_state.quiz_added_wrong_ids = set()
     for k in list(st.session_state.keys()):
         if isinstance(k, str) and k.startswith("q_"):
             del st.session_state[k]
@@ -106,6 +110,25 @@ def _fetch_chapter_questions(subject_param, chapter_name, q_type):
     except requests.ConnectionError:
         st.error("后端服务未连接")
     return []
+
+
+def _add_to_wrong_questions(question_id):
+    """Manually collect a question without requiring a graded attempt."""
+    try:
+        response = requests.post(
+            f"{api_base}/api/wrong-questions/",
+            json={"question_id": question_id},
+            timeout=10,
+        )
+        if response.status_code == 200:
+            return True, None
+        try:
+            detail = response.json().get("detail", response.text)
+        except ValueError:
+            detail = response.text
+        return False, detail
+    except requests.RequestException as exc:
+        return False, str(exc)
 
 
 def _render_question_assets(q):
@@ -180,6 +203,68 @@ def _render_answer_provenance(result):
         parts.append("仅供参考")
 
     st.caption(" · ".join(parts))
+
+
+def _render_answer_calibration(q, result, option_map):
+    """Offer answer correction after submission, without changing this attempt."""
+    qid = q["id"]
+    saved_answer = st.session_state.quiz_manual_answers.get(qid)
+    current_answer = saved_answer or (result or {}).get("correct_answer", "")
+    if current_answer == "(暂无答案)":
+        current_answer = ""
+    is_choice = q.get("question_type") == "choice" and bool(option_map)
+
+    if saved_answer:
+        st.success("答案已保存到当前数据库；本次作答结果不追溯修改，下次练习使用新答案。")
+
+    with st.expander("✍️ 校准答案（补录或修正）"):
+        st.caption("请核对可靠来源。修改后仅影响后续判分；不会改动原始题库包或历史成绩。")
+        with st.form(key=f"manual_answer_{qid}"):
+            if is_choice:
+                choices = list(option_map.keys())
+                confirmed_answer = st.selectbox(
+                    "正确选项",
+                    options=choices,
+                    index=choices.index(current_answer) if current_answer in choices else None,
+                    placeholder="请选择核对后的正确选项",
+                )
+            else:
+                confirmed_answer = st.text_area(
+                    "参考答案（综合题不会自动判分）",
+                    value=current_answer,
+                    height=150,
+                    max_chars=10000,
+                )
+            explanation = st.text_area(
+                "解析（可选；留空则保留原解析）",
+                max_chars=10000,
+            )
+            confirmed = st.checkbox("我已核对答案，并确认保存或覆盖已有答案")
+            save_clicked = st.form_submit_button("保存校准答案")
+
+        if save_clicked:
+            if not confirmed_answer or not str(confirmed_answer).strip():
+                st.error("请先填写或选择正确答案")
+            elif not confirmed:
+                st.error("请先确认已核对答案")
+            else:
+                try:
+                    response = requests.put(
+                        f"{api_base}/api/questions/{qid}/answer",
+                        json={
+                            "answer": confirmed_answer,
+                            "analysis": explanation or None,
+                            "confirm_overwrite": True,
+                        },
+                        timeout=10,
+                    )
+                    if response.status_code == 200:
+                        st.session_state.quiz_manual_answers[qid] = response.json()["answer"]
+                        st.rerun()
+                    else:
+                        st.error(f"保存失败: {response.json().get('detail', response.text)}")
+                except requests.RequestException as exc:
+                    st.error(f"保存失败，请检查后端连接: {exc}")
 
 
 # ─── Mode-specific sidebar ───
@@ -306,12 +391,28 @@ else:
     for i, q in enumerate(questions):
         # Wrap each question in a styled card
         st.markdown('<div class="question-card">', unsafe_allow_html=True)
-        st.markdown(
-            f'<span style="color:#00f0ff;font-weight:700;">第 {i + 1} 题</span>'
-            f'<span style="color:#7878a0;"> · {q.get("subject", "")} · {q.get("chapter", "")}'
-            f' · ID: {q.get("id", "")}</span>',
-            unsafe_allow_html=True,
-        )
+        title_col, add_col = st.columns([5, 2], vertical_alignment="center")
+        with title_col:
+            st.markdown(
+                f'<span style="color:#00f0ff;font-weight:700;">第 {i + 1} 题</span>'
+                f'<span style="color:#7878a0;"> · {q.get("subject", "")} · {q.get("chapter", "")}'
+                f' · ID: {q.get("id", "")}</span>',
+                unsafe_allow_html=True,
+            )
+        with add_col:
+            added = q["id"] in st.session_state.quiz_added_wrong_ids
+            if st.button(
+                "✅ 已加入错题集" if added else "➕ 加入错题集",
+                key=f"add_wrong_{q['id']}",
+                disabled=added,
+                help="手动收藏这道题，无需先作答或判分",
+            ):
+                ok, error = _add_to_wrong_questions(q["id"])
+                if ok:
+                    st.session_state.quiz_added_wrong_ids.add(q["id"])
+                    st.rerun()
+                else:
+                    st.error(f"加入错题集失败：{error}")
         _render_question_text(q.get("question_text", ""))
 
         # Display structured assets first, then legacy images if needed
@@ -383,7 +484,13 @@ else:
 
             if not graded:
                 # 未判分
-                if result.get("analysis"):
+                if correct_ans != "(暂无答案)" and q.get("question_type") != "choice":
+                    st.info("⚪ 综合题不自动判分，请对照参考答案自评")
+                    with st.expander("📖 查看参考答案 / 解析"):
+                        st.markdown(correct_ans)
+                        if result.get("analysis"):
+                            st.markdown(result["analysis"])
+                elif result.get("analysis"):
                     st.info("⚪ 本题未自动判分（综合题/AI 未能给出答案），请对照下方参考答案自评")
                     with st.expander("📖 查看参考答案 / 解析"):
                         st.markdown(result["analysis"])
@@ -417,6 +524,12 @@ else:
             if graded and result.get("analysis"):
                 with st.expander("📖 查看解析"):
                     st.markdown(result["analysis"])
+
+
+        if st.session_state.quiz_submitted:
+            _render_answer_calibration(
+                q, st.session_state.quiz_results.get(q["id"]), option_map
+            )
 
         st.markdown('</div>', unsafe_allow_html=True)
 
