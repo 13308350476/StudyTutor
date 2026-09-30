@@ -21,12 +21,15 @@ def test_manual_add_can_collect_unanswered_question(db_session):
     assert added["question_id"] == question.id
     assert added["last_status"] == "unreviewed"
     assert added["source"] == "manual"
+    assert added["next_review_at"] is not None
     assert db_session.query(QuizRecord).count() == 0
 
 
 def test_repeated_manual_add_preserves_review_status(db_session):
     question, wrong = make_wrong_question(db_session, answer="B", status="correct")
     wrong.review_count = 2
+    from datetime import datetime, timedelta
+    wrong.next_review_at = datetime.now() + timedelta(days=7)
     db_session.commit()
 
     service = WrongQuestionService(db_session)
@@ -34,6 +37,7 @@ def test_repeated_manual_add_preserves_review_status(db_session):
     assert result["id"] == wrong.id
     assert result["last_status"] == "correct"
     assert result["review_count"] == 2
+    assert result["next_review_at"] == wrong.next_review_at.isoformat()
     assert db_session.query(WrongQuestion).filter_by(question_id=question.id).count() == 1
 
     service.auto_add(question)  # A real wrong answer must still mark it for review.
@@ -117,7 +121,7 @@ def test_verified_candidate_is_graded_once(db_session):
     assert result["graded"] is True
     assert result["is_correct"] is True
     assert result["answer_source"] == "deepseek"
-    assert result["updated"] == {"last_status": "correct", "review_count": 1}
+    assert result["updated"] == {"last_status": "reviewing", "review_count": 1}
     assert db_session.query(QuizRecord).count() == 1
     assert QuizService(db_session).get_stats().total_correct == 1
 
@@ -137,7 +141,7 @@ def test_graded_wrong_then_correct_updates_review_without_duplicate_records(db_s
     second = service.submit_review(wrong.id, "B")
     assert second["graded"] is True
     assert second["is_correct"] is True
-    assert second["updated"] == {"last_status": "correct", "review_count": 2}
+    assert second["updated"] == {"last_status": "reviewing", "review_count": 2}
     assert db_session.query(WrongQuestion).filter_by(question_id=question.id).count() == 1
     assert db_session.query(QuizRecord).count() == 2
     stats = QuizService(db_session).get_stats()

@@ -1,6 +1,6 @@
 """WrongQuestion Repository — data access for wrong question records."""
 
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from sqlalchemy import func
 from sqlalchemy.orm import Session, joinedload
@@ -13,6 +13,8 @@ class WrongQuestionRepository(BaseRepository[WrongQuestion]):
     """Data access layer for WrongQuestion model."""
 
     model = WrongQuestion
+
+    REVIEW_INTERVALS = (1, 3, 7, 14)
 
     def __init__(self, db: Session):
         super().__init__(db)
@@ -27,7 +29,8 @@ class WrongQuestionRepository(BaseRepository[WrongQuestion]):
         """Upsert: insert new or update existing wrong question.
 
         An automatic wrong answer marks an existing entry as 'wrong'; manually
-        re-adding a question leaves its review status untouched.
+        re-adding a question leaves its review status untouched. Both sources
+        receive a first review one day after collection.
         Returns the WrongQuestion row.
         """
         existing = (
@@ -38,6 +41,13 @@ class WrongQuestionRepository(BaseRepository[WrongQuestion]):
         if existing:
             if source == "auto":
                 existing.last_status = "wrong"
+                existing.mastery_source = None
+                existing.review_stage = 0
+                existing.next_review_at = datetime.now() + timedelta(days=self.REVIEW_INTERVALS[0])
+            elif existing.review_count == 0 and existing.next_review_at is None:
+                # A legacy unscheduled bookmark can join the plan without
+                # changing its existing review status.
+                existing.next_review_at = (existing.added_at or datetime.now()) + timedelta(days=self.REVIEW_INTERVALS[0])
             existing.subject = subject
             existing.chapter = chapter
             self.db.flush()
@@ -50,6 +60,8 @@ class WrongQuestionRepository(BaseRepository[WrongQuestion]):
             chapter=chapter or "",
             last_status="unreviewed",
             review_count=0,
+            review_stage=0,
+            next_review_at=datetime.now() + timedelta(days=self.REVIEW_INTERVALS[0]),
         )
         self.db.add(wq)
         self.db.flush()
@@ -131,15 +143,74 @@ class WrongQuestionRepository(BaseRepository[WrongQuestion]):
         return q.count()
 
     def update_review(self, wrong_id: int, is_correct: bool) -> WrongQuestion | None:
-        """Update review status after a re-challenge attempt."""
+        """Advance only a due, correct review; graduate after the 14-day recall."""
         wq = self.get_by_id(wrong_id)
         if not wq:
             return None
-        wq.last_status = "correct" if is_correct else "wrong"
         wq.review_count += 1
-        wq.last_review_at = datetime.now()
+        now = datetime.now()
+        wq.last_review_at = now
+        if not is_correct:
+            wq.last_status = "wrong"
+            wq.mastery_source = None
+            wq.review_stage = 0
+            wq.next_review_at = now + timedelta(days=self.REVIEW_INTERVALS[0])
+        elif wq.last_status == "correct":
+            # An optional practice attempt must not undo a mastered item.
+            wq.next_review_at = None
+        elif wq.next_review_at and wq.next_review_at.date() > now.date():
+            # Early voluntary practice counts as an attempt, not a scheduled
+            # review; it must not skip the 3/7/14-day intervals.
+            wq.last_status = "reviewing"
+        elif (wq.review_stage or 0) >= 3:
+            wq.last_status = "correct"
+            wq.mastery_source = "schedule"
+            wq.next_review_at = None
+        else:
+            wq.last_status = "reviewing"
+            wq.review_stage = (wq.review_stage or 0) + 1
+            wq.next_review_at = now + timedelta(days=self.REVIEW_INTERVALS[wq.review_stage])
         self.db.flush()
         return wq
+
+    def mark_mastered(self, wrong_id: int) -> WrongQuestion | None:
+        """A manual override does not create a quiz attempt or change review_count."""
+        wq = self.get_by_id(wrong_id)
+        if wq is None:
+            return None
+        if wq.last_status == "correct":
+            raise ValueError("这道题已标记为已掌握")
+        wq.last_status = "correct"
+        wq.mastery_source = "manual"
+        wq.next_review_at = None
+        self.db.flush()
+        return wq
+
+    def rejoin_review(self, wrong_id: int) -> WrongQuestion | None:
+        """Restart a mastered item's review plan at the one-day first stage."""
+        wq = self.get_by_id(wrong_id)
+        if wq is None:
+            return None
+        if wq.last_status != "correct":
+            raise ValueError("这道题尚未标记为已掌握")
+        wq.last_status = "reviewing" if wq.review_count else "unreviewed"
+        wq.mastery_source = None
+        wq.review_stage = 0
+        wq.next_review_at = datetime.now() + timedelta(days=self.REVIEW_INTERVALS[0])
+        self.db.flush()
+        return wq
+
+    def get_due(self, now: datetime | None = None) -> list[WrongQuestion]:
+        """All overdue and due-today scheduled questions, earliest first."""
+        today_end = datetime.combine((now or datetime.now()).date() + timedelta(days=1), datetime.min.time())
+        return (
+            self.db.query(WrongQuestion)
+            .filter(WrongQuestion.next_review_at.isnot(None))
+            .filter(WrongQuestion.last_status != "correct")
+            .filter(WrongQuestion.next_review_at < today_end)
+            .order_by(WrongQuestion.next_review_at.asc(), WrongQuestion.id.asc())
+            .all()
+        )
 
     def get_stats(self) -> dict:
         """Aggregate stats: total, by_subject, by_status."""
@@ -162,7 +233,7 @@ class WrongQuestionRepository(BaseRepository[WrongQuestion]):
         by_status = {row[0]: row[1] for row in status_rows}
 
         # Review rate
-        reviewed = by_status.get("correct", 0) + by_status.get("wrong", 0)
+        reviewed = by_status.get("correct", 0) + by_status.get("wrong", 0) + by_status.get("reviewing", 0)
         review_rate = reviewed / total if total > 0 else 0.0
 
         return {

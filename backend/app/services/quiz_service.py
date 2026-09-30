@@ -15,6 +15,7 @@ from app.config import get_settings
 from app.core.exceptions import QuestionNotFoundError
 from app.core.logging_config import get_logger
 from app.models.question import Question
+from app.models.essay_attempt import EssayAttempt
 from app.repositories.answer_candidate_repo import AnswerCandidateRepository
 from app.repositories.question_repo import QuestionRepository
 from app.repositories.quiz_repo import QuizRepository, WeakKnowledgeRepository
@@ -80,6 +81,7 @@ class QuizService:
         self,
         question_id: int,
         user_answer: str,
+        wrong_id: int | None = None,
     ) -> QuizResult:
         """Submit a user's answer and return the result.
 
@@ -193,6 +195,13 @@ class QuizService:
                         exc_info=True,
                     )
 
+        attempt = None
+        if not graded and not is_choice:
+            attempt = EssayAttempt(
+                question_id=question_id, wrong_id=wrong_id, user_answer=user_answer
+            )
+            self.db.add(attempt)
+            self.db.flush()
         self.db.commit()
 
         logger.info(
@@ -207,6 +216,8 @@ class QuizService:
             user_answer=user_answer,
             correct_answer=correct_answer or "(暂无答案)",
             is_correct=is_correct,
+            assessment_source="auto" if graded else None,
+            attempt_token=attempt.token if attempt else None,
             graded=graded,
             analysis=analysis or None,
             knowledge_tag=question.knowledge_tag,
@@ -216,6 +227,55 @@ class QuizService:
             usable_for_grading=usable_for_grading,
             misconception_synced=misconception_synced,
             wrong_question_synced=wrong_question_synced,
+        )
+
+    def self_assess(self, attempt_token: str, is_correct: bool, wrong_id: int | None = None) -> QuizResult:
+        """Record a subjective result for a non-choice question only."""
+        attempt = self.db.get(EssayAttempt, attempt_token)
+        if attempt is None or attempt.wrong_id != wrong_id:
+            raise ValueError("未找到对应的综合题提交记录")
+        if attempt.assessed:
+            raise ValueError("本次作答已自评，请勿重复提交")
+        question_id, user_answer = attempt.question_id, attempt.user_answer
+        question = self.question_repo.get_by_id(question_id)
+        if question is None:
+            raise QuestionNotFoundError(f"Question not found: id={question_id}")
+        if self._is_choice_question(question):
+            raise ValueError("选择题应使用自动判分，不能手动自评")
+        if not user_answer.strip():
+            raise ValueError("请先填写答案")
+
+        # Compare-and-set prevents replay (including simultaneous requests).
+        from sqlalchemy import update
+        claimed = self.db.execute(
+            update(EssayAttempt)
+            .where(EssayAttempt.token == attempt_token, EssayAttempt.assessed.is_(False))
+            .values(assessed=True)
+        )
+        if claimed.rowcount != 1:
+            raise ValueError("本次作答已自评，请勿重复提交")
+
+        self.quiz_repo.create_record(
+            question_id, user_answer, is_correct, assessment_source="self_assessed"
+        )
+        # Weak-knowledge scores are based on objectively graded attempts only.
+        if not is_correct and wrong_id is None:
+            from app.services.wrong_question_service import WrongQuestionService
+            WrongQuestionService(self.db).auto_add(question)
+        if wrong_id is None:
+            self.db.commit()
+
+        return QuizResult(
+            question_id=question_id,
+            user_answer=user_answer,
+            correct_answer=(question.answer or "").strip() or "(暂无答案)",
+            is_correct=is_correct,
+            graded=True,
+            assessment_source="self_assessed",
+            analysis=question.analysis or None,
+            knowledge_tag=question.knowledge_tag,
+            answer_ref=question.answer_ref,
+            usable_for_grading=False,
         )
 
     def save_manual_answer(
@@ -467,6 +527,7 @@ class QuizService:
             total_attempts=total,
             total_correct=correct,
             accuracy=round(accuracy, 4),
+            assessment_stats=self.quiz_repo.get_assessment_stats(),
             subject_stats=subject_stats,
             weak_knowledge=weak_knowledge,
         )

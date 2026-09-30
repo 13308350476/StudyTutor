@@ -118,6 +118,7 @@ class WrongQuestionService:
                     "chapter": q.chapter,
                     "question_text": q.question_text,
                     "question_type": q.question_type,
+                    "last_status": wq.last_status,
                     "option_a": q.option_a,
                     "option_b": q.option_b,
                     "option_c": q.option_c,
@@ -132,7 +133,7 @@ class WrongQuestionService:
         if not wq or not wq.question:
             return {"error": "Wrong question not found"}
 
-        result = QuizService(self.db).submit_answer(wq.question_id, user_answer)
+        result = QuizService(self.db).submit_answer(wq.question_id, user_answer, wrong_id=wrong_id)
         if result.graded:
             self.repo.update_review(wrong_id, result.is_correct)
             self.db.commit()
@@ -150,11 +151,48 @@ class WrongQuestionService:
             },
         }
 
+    def self_assess_review(self, wrong_id: int, attempt_token: str, is_correct: bool) -> dict:
+        """Apply self-assessed outcome to the same review state as objective grading."""
+        wq = self.repo.get_with_question(wrong_id)
+        if not wq or not wq.question:
+            return {"error": "Wrong question not found"}
+        result = QuizService(self.db).self_assess(attempt_token, is_correct, wrong_id=wrong_id)
+        self.repo.update_review(wrong_id, is_correct)
+        self.db.commit()
+        return {
+            **result.model_dump(),
+            "updated": {"last_status": wq.last_status, "review_count": wq.review_count},
+        }
+
     # ── Stats ──
 
     def get_stats(self) -> dict:
         """Aggregate statistics."""
         return self.repo.get_stats()
+
+    def mark_mastered(self, wrong_id: int) -> dict:
+        """Manually graduate an item without fabricating a correct attempt."""
+        wq = self.repo.mark_mastered(wrong_id)
+        if wq is None:
+            return {"error": "Wrong question not found"}
+        self.db.commit()
+        return self._serialize(wq)
+
+    def rejoin_review(self, wrong_id: int) -> dict:
+        """Let a mastered item join today's review queue again."""
+        wq = self.repo.rejoin_review(wrong_id)
+        if wq is None:
+            return {"error": "Wrong question not found"}
+        self.db.commit()
+        return self._serialize(wq)
+
+    def get_due_reviews(self) -> dict:
+        """Scheduled questions due today or earlier, without revealing answers."""
+        due = self.repo.get_due()
+        return {
+            "total": len(due),
+            "items": [self._serialize_with_preview(wq) for wq in due],
+        }
 
     def get_chapters(self, subject: str) -> list[str]:
         """Chapters for a given subject."""
@@ -174,6 +212,9 @@ class WrongQuestionService:
             "review_count": wq.review_count,
             "added_at": wq.added_at.isoformat() if wq.added_at else None,
             "last_review_at": wq.last_review_at.isoformat() if wq.last_review_at else None,
+            "next_review_at": wq.next_review_at.isoformat() if wq.next_review_at else None,
+            "review_stage": wq.review_stage,
+            "mastery_source": wq.mastery_source,
         }
 
     @staticmethod

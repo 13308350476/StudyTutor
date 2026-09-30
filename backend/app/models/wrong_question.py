@@ -42,7 +42,7 @@ class WrongQuestion(Base):
 
     last_status: Mapped[str] = mapped_column(
         String(16), nullable=False, default="unreviewed",
-        comment="最近重做状态: correct / wrong / unreviewed",
+        comment="复习状态: correct(已掌握) / reviewing / wrong / unreviewed",
     )
 
     review_count: Mapped[int] = mapped_column(
@@ -55,6 +55,18 @@ class WrongQuestion(Base):
 
     last_review_at: Mapped[datetime | None] = mapped_column(
         DateTime, nullable=True, comment="最近一次重做时间",
+    )
+
+    review_stage: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0",
+        comment="间隔档位：0/1/2/3 对应 1/3/7/14 天",
+    )
+    next_review_at: Mapped[datetime | None] = mapped_column(
+        DateTime, nullable=True, comment="下次待复习时间；空值表示尚未排期",
+    )
+    mastery_source: Mapped[str | None] = mapped_column(
+        String(16), nullable=True,
+        comment="manual 手动标记 / schedule 完成14天间隔复习；空值表示未掌握",
     )
 
     # Relationship

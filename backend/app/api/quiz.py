@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 
 from app.api.deps import get_db
 from app.core.exceptions import QuestionNotFoundError
-from app.schemas.quiz import QuizSubmit, QuizResult, QuizStatsResponse, QuizRecordResponse
+from app.schemas.quiz import QuizSubmit, QuizSelfAssessment, QuizResult, QuizStatsResponse, QuizRecordResponse
 from app.services.quiz_service import QuizService
 
 router = APIRouter(prefix="/api/quiz", tags=["刷题"])
@@ -34,6 +34,19 @@ def get_quiz_stats(db: Session = Depends(get_db)):
     """Get overall quiz statistics including accuracy and weak points."""
     service = QuizService(db)
     return service.get_stats()
+
+
+@router.post("/self-assess", response_model=QuizResult)
+def self_assess(payload: QuizSelfAssessment, db: Session = Depends(get_db)):
+    """Save the user's own judgment for a submitted non-choice answer."""
+    try:
+        return QuizService(db).self_assess(
+            payload.attempt_token, payload.is_correct
+        )
+    except QuestionNotFoundError:
+        raise HTTPException(status_code=404, detail="Question not found")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
 
 
 @router.get("/history", response_model=list[QuizRecordResponse])

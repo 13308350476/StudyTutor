@@ -36,12 +36,16 @@ st.markdown(
 )
 
 col1, col2, col3 = st.columns(3)
-col1.metric("答题总数", stats.get("total_attempts", 0))
-col2.metric("答对题数", stats.get("total_correct", 0))
+col1.metric("客观判分题数", stats.get("total_attempts", 0))
+col2.metric("客观答对题数", stats.get("total_correct", 0))
 
 accuracy = stats.get("accuracy", 0)
 display_acc = accuracy if accuracy > 1.0 else accuracy * 100
-col3.metric("总正确率", f"{display_acc:.1f}%")
+col3.metric("客观正确率", f"{display_acc:.1f}%")
+
+self_stats = stats.get("assessment_stats", {}).get("self_assessed", {})
+if self_stats.get("total"):
+    st.info(f"综合题用户自评：{self_stats.get('correct', 0)} / {self_stats['total']} 题答对（不计入客观正确率）")
 
 # ─── Subject breakdown ───
 glow_divider()
@@ -165,11 +169,15 @@ try:
                 qid = record.get('question_id', '')
                 user_ans = record.get('user_answer', '')
                 time_str = record.get('create_time', '')[:16]
+                source = "（用户自评）" if record.get("assessment_source") == "self_assessed" else "（自动判分）"
+                # Escape user-provided answer before embedding it in HTML.
+                import html
+                user_ans = html.escape(str(user_ans))[:150]
 
                 st.markdown(
                     f'<div class="history-row">'
                     f'<span style="font-size:1.1rem;">{icon}</span>'
-                    f'<span style="color:#7878a0;">#{qid}</span>'
+                    f'<span style="color:#7878a0;">#{qid}{source}</span>'
                     f'<span style="color:#e0e0f0;">你的答案: <strong style="color:{accent};">{user_ans}</strong></span>'
                     f'<span style="color:#7878a0;font-size:0.85rem;margin-left:auto;">{time_str}</span>'
                     f'</div>',

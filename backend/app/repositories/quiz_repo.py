@@ -1,6 +1,6 @@
 """Quiz Repository — data access for quiz records and statistics."""
 
-from sqlalchemy import func
+from sqlalchemy import Integer, func
 from sqlalchemy.orm import Session
 
 from app.models.quiz_record import QuizRecord
@@ -21,12 +21,14 @@ class QuizRepository(BaseRepository[QuizRecord]):
         question_id: int,
         user_answer: str,
         is_correct: bool,
+        assessment_source: str = "auto",
     ) -> QuizRecord:
         """Create a new quiz attempt record."""
         record = QuizRecord(
             question_id=question_id,
             user_answer=user_answer,
             is_correct=is_correct,
+            assessment_source=assessment_source,
         )
         self.db.add(record)
         self.db.flush()
@@ -50,11 +52,25 @@ class QuizRepository(BaseRepository[QuizRecord]):
         """Return (total_attempts, total_correct)."""
         from sqlalchemy import text
         row = self.db.execute(text(
-            "SELECT COUNT(*), SUM(CASE WHEN is_correct THEN 1 ELSE 0 END) FROM quiz_records"
+            "SELECT COUNT(*), SUM(CASE WHEN is_correct THEN 1 ELSE 0 END) FROM quiz_records WHERE assessment_source = 'auto'"
         )).fetchone()
         total = row[0] or 0
         correct = int(row[1] or 0)
         return total, correct
+
+    def get_assessment_stats(self) -> dict[str, dict[str, int]]:
+        """Separate objective grading from subjective self-assessment."""
+        rows = (
+            self.db.query(
+                QuizRecord.assessment_source,
+                func.count(QuizRecord.id),
+                func.sum(QuizRecord.is_correct.cast(Integer)),
+            )
+            .group_by(QuizRecord.assessment_source)
+            .all()
+        )
+        return {source: {"total": total, "correct": correct or 0}
+                for source, total, correct in rows}
 
     def get_subject_stats(self) -> list[dict]:
         """Get accuracy statistics grouped by subject."""
@@ -65,6 +81,7 @@ class QuizRepository(BaseRepository[QuizRecord]):
                    SUM(CASE WHEN qr.is_correct THEN 1 ELSE 0 END) as correct
             FROM quiz_records qr
             JOIN questions q ON qr.question_id = q.id
+            WHERE qr.assessment_source = 'auto'
             GROUP BY q.subject
         """)).fetchall()
 

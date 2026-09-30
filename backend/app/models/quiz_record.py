@@ -2,7 +2,7 @@
 
 from datetime import datetime
 
-from sqlalchemy import Integer, String, Boolean, DateTime, ForeignKey, Index
+from sqlalchemy import Integer, String, Text, Boolean, DateTime, ForeignKey, Index
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database.base import Base
@@ -23,10 +23,14 @@ class QuizRecord(Base):
         Integer, ForeignKey("questions.id"), nullable=False
     )
     user_answer: Mapped[str] = mapped_column(
-        String(50), nullable=False, comment="用户提交的答案"
+        Text, nullable=False, comment="用户提交的答案"
     )
     is_correct: Mapped[bool] = mapped_column(
         Boolean, nullable=False, comment="是否正确"
+    )
+    assessment_source: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="auto", server_default="auto",
+        comment="auto 自动判分 / self_assessed 用户自评",
     )
     create_time: Mapped[datetime] = mapped_column(
         DateTime, nullable=False, default=datetime.now

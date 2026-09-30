@@ -9,7 +9,12 @@ class QuizSubmit(BaseModel):
     """Schema for submitting a quiz answer."""
 
     question_id: int = Field(..., description="题目ID")
-    user_answer: str = Field(..., max_length=50, description="用户答案")
+    user_answer: str = Field(..., max_length=10000, description="用户答案")
+
+
+class QuizSelfAssessment(BaseModel):
+    attempt_token: str = Field(..., description="提交综合题时获取的一次性凭据")
+    is_correct: bool = Field(..., description="用户对照参考答案后的自评结果")
 
 
 class QuizResult(BaseModel):
@@ -19,6 +24,8 @@ class QuizResult(BaseModel):
     user_answer: str
     correct_answer: str
     is_correct: bool
+    assessment_source: str | None = None
+    attempt_token: str | None = None
     graded: bool = Field(
         True,
         description="是否已自动判分。False 表示未判分（综合题或 AI 兜底失败），"
@@ -55,6 +62,7 @@ class QuizStatsResponse(BaseModel):
     total_attempts: int = 0
     total_correct: int = 0
     accuracy: float = Field(0.0, description="总正确率")
+    assessment_stats: dict[str, dict[str, int]] = Field(default_factory=dict)
     subject_stats: list[dict] = Field(default_factory=list, description="各科统计")
     weak_knowledge: list[dict] = Field(default_factory=list, description="薄弱知识点")
 
@@ -66,6 +74,7 @@ class QuizRecordResponse(BaseModel):
     question_id: int
     user_answer: str
     is_correct: bool
+    assessment_source: str = "auto"
     create_time: datetime
 
     model_config = {"from_attributes": True}

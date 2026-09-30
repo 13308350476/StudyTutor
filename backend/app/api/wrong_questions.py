@@ -19,7 +19,12 @@ class ManualAddRequest(BaseModel):
 
 
 class ReviewSubmitRequest(BaseModel):
-    user_answer: str = Field(..., max_length=50, description="用户答案")
+    user_answer: str = Field(..., max_length=10000, description="用户答案")
+
+
+class ReviewSelfAssessmentRequest(BaseModel):
+    attempt_token: str
+    is_correct: bool
 
 
 class BatchReviewRequest(BaseModel):
@@ -40,6 +45,12 @@ def get_stats(db: Session = Depends(get_db)):
     return service.get_stats()
 
 
+@router.get("/due")
+def get_due_reviews(db: Session = Depends(get_db)):
+    """到期或逾期的待复习错题（不包含答案）。"""
+    return WrongQuestionService(db).get_due_reviews()
+
+
 @router.get("/chapters")
 def get_chapters(
     subject: str = Query(..., description="科目名称"),
@@ -55,7 +66,7 @@ def get_chapters(
 def list_wrong_questions(
     subject: str | None = Query(None, description="科目筛选"),
     chapter: str | None = Query(None, description="章节筛选"),
-    status: str | None = Query(None, description="状态筛选: correct/wrong/unreviewed"),
+    status: str | None = Query(None, description="状态筛选: correct/reviewing/wrong/unreviewed"),
     page: int = Query(1, ge=1, description="页码"),
     page_size: int = Query(20, ge=1, le=100, description="每页条数"),
     db: Session = Depends(get_db),
@@ -111,6 +122,30 @@ def remove_wrong_question(
     return {"success": True}
 
 
+@router.post("/{wrong_id}/mastery")
+def mark_mastered(wrong_id: int, db: Session = Depends(get_db)):
+    """手动标记已掌握，不记录为答对。"""
+    try:
+        result = WrongQuestionService(db).mark_mastered(wrong_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    if "error" in result:
+        raise HTTPException(status_code=404, detail=result["error"])
+    return result
+
+
+@router.delete("/{wrong_id}/mastery")
+def rejoin_review(wrong_id: int, db: Session = Depends(get_db)):
+    """撤销已掌握，重新加入今日复习。"""
+    try:
+        result = WrongQuestionService(db).rejoin_review(wrong_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    if "error" in result:
+        raise HTTPException(status_code=404, detail=result["error"])
+    return result
+
+
 @router.post("/batch-remove")
 def batch_remove(
     payload: BatchRemoveRequest,
@@ -145,6 +180,24 @@ def submit_review(
     """提交重做答案。"""
     service = WrongQuestionService(db)
     result = service.submit_review(wrong_id, payload.user_answer)
+    if "error" in result:
+        raise HTTPException(status_code=404, detail=result["error"])
+    return result
+
+
+@router.post("/{wrong_id}/self-assess")
+def self_assess_review(
+    wrong_id: int,
+    payload: ReviewSelfAssessmentRequest,
+    db: Session = Depends(get_db),
+):
+    """Record a non-choice review as self-assessed, not auto-graded."""
+    try:
+        result = WrongQuestionService(db).self_assess_review(
+            wrong_id, payload.attempt_token, payload.is_correct
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
     if "error" in result:
         raise HTTPException(status_code=404, detail=result["error"])
     return result

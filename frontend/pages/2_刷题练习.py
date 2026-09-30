@@ -500,6 +500,35 @@ else:
                         st.markdown(f"请参考: **{answer_ref}**")
                 else:
                     st.warning("⚠️ 本题未能自动判分（AI 未返回有效答案）")
+                if result.get("attempt_token") and q.get("question_type") != "choice":
+                    st.caption("对照参考答案或原书答案后，自行判断本题是否掌握；结果标记为用户自评。")
+                    col_yes, col_no, _ = st.columns([1, 1, 6], gap="small")
+                    chosen = None
+                    with col_yes:
+                        if st.button("✅ 我答对了", key=f"self_yes_{q['id']}"):
+                            chosen = True
+                    with col_no:
+                        if st.button("❌ 我答错了", key=f"self_no_{q['id']}"):
+                            chosen = False
+                    if chosen is not None:
+                        try:
+                            response = requests.post(
+                                f"{api_base}/api/quiz/self-assess",
+                                json={"attempt_token": result["attempt_token"], "is_correct": chosen},
+                                timeout=15,
+                            )
+                            if response.status_code == 200:
+                                st.session_state.quiz_results[q["id"]] = response.json()
+                                st.rerun()
+                            st.error(f"自评保存失败：{response.json().get('detail', response.text)}")
+                        except requests.RequestException as exc:
+                            st.error(f"自评保存失败：{exc}")
+            elif result.get("assessment_source") == "self_assessed":
+                st.success("✅ 已自评：答对" if result["is_correct"] else "❌ 已自评：答错")
+                st.caption("用户自评，不计入客观正确率。")
+                if correct_ans != "(暂无答案)":
+                    with st.expander("📖 查看参考答案"):
+                        st.markdown(correct_ans)
             elif correct_ans == "(暂无答案)":
                 st.warning("⚠️ 该题暂无标准答案，无法判定对错")
                 if answer_ref:
@@ -625,10 +654,13 @@ if questions and not st.session_state.quiz_submitted:
 # Show summary if already submitted
 if st.session_state.quiz_submitted and "quiz_results" in st.session_state:
     results = st.session_state.quiz_results
-    graded_results = {qid: r for qid, r in results.items() if r.get("graded", True)}
+    graded_results = {qid: r for qid, r in results.items() if r.get("graded", True) and r.get("assessment_source") != "self_assessed"}
     correct_count = sum(1 for r in graded_results.values() if r.get("is_correct"))
     graded_count = len(graded_results)
-    ungraded_count = len(results) - graded_count
+    self_results = [r for r in results.values() if r.get("assessment_source") == "self_assessed"]
+    ungraded_count = len(results) - graded_count - len(self_results)
+    if self_results:
+        st.info(f"综合题自评：{sum(bool(r.get('is_correct')) for r in self_results)}/{len(self_results)} 题答对（不计入客观正确率）")
     if graded_count > 0:
         accuracy = correct_count / graded_count * 100
         extra = f"（另有 {ungraded_count} 题未判分）" if ungraded_count > 0 else ""

@@ -558,6 +558,9 @@ header[data-testid="stHeader"] {
 .wq-wrong {
     border-left: 3px solid #ff4444 !important;
 }
+.wq-reviewing {
+    border-left: 3px solid #fbbf24 !important;
+}
 .wq-unreviewed {
     border-left: 3px solid #555577 !important;
 }
@@ -570,6 +573,7 @@ header[data-testid="stHeader"] {
 }
 .wq-dot-correct { background: #00ff88; box-shadow: 0 0 6px #00ff8866; }
 .wq-dot-wrong { background: #ff4444; box-shadow: 0 0 6px #ff444466; }
+.wq-dot-reviewing { background: #fbbf24; box-shadow: 0 0 6px #fbbf2466; }
 .wq-dot-unreviewed { background: #555577; }
 .wq-subject-tag {
     display: inline-block;
